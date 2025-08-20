@@ -1,6 +1,10 @@
-const SHOPIFY_STORE_DOMAIN = "ugy32n-we.myshopify.com";
-const SHOPIFY_STOREFRONT_API_TOKEN = "50097394e3b49923044b5ee55335e9ae";
-const API_URL = `https://${SHOPIFY_STORE_DOMAIN}/api/2025-01/graphql.json`;
+// src/shopify.js
+
+// ✅ Read from Vite env vars (set these in .env locally and in Vercel)
+const SHOPIFY_STORE_DOMAIN = import.meta.env.VITE_SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_STOREFRONT_API_TOKEN = import.meta.env.VITE_SHOPIFY_STOREFRONT_API_TOKEN;
+const API_VERSION = import.meta.env.VITE_SHOPIFY_API_VERSION || "2025-01";
+const API_URL = `https://${SHOPIFY_STORE_DOMAIN}/api/${API_VERSION}/graphql.json`;
 
 // Base Shopify fetch function
 export async function shopify(query, variables = {}) {
@@ -20,7 +24,7 @@ export async function shopify(query, variables = {}) {
   const json = await res.json();
   if (json.errors) {
     console.error("Shopify API Error:", json.errors);
-    throw new Error(json.errors[0].message || "Shopify API request failed");
+    throw new Error(json.errors[0]?.message || "Shopify API request failed");
   }
 
   return json.data;
@@ -62,9 +66,11 @@ export async function addToCart(variantId, quantity = 1) {
       }
     `;
     const data = await shopify(mutation, { variantId, quantity });
-    cartId = data.cartCreate.cart.id;
-    localStorage.setItem("shopify_cart_id", cartId);
-    return data.cartCreate.cart;
+    const cart = data.cartCreate?.cart;
+    if (cart?.id) {
+      localStorage.setItem("shopify_cart_id", cart.id);
+    }
+    return cart;
   } else {
     // Cart exists → add line to it
     const mutation = `
@@ -98,6 +104,6 @@ export async function addToCart(variantId, quantity = 1) {
       }
     `;
     const data = await shopify(mutation, { cartId, variantId, quantity });
-    return data.cartLinesAdd.cart;
+    return data.cartLinesAdd?.cart;
   }
 }
