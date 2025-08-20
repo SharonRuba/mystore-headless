@@ -6,9 +6,18 @@ function App() {
   const [cartId, setCartId] = useState(null);
   const [checkoutUrl, setCheckoutUrl] = useState(null);
 
-  // 🔹 Create cart on first load
+  // 🔹 Create (or resume) cart on first load
   useEffect(() => {
-    async function createCart() {
+    const savedCartId = localStorage.getItem("shopify_cart_id");
+    const savedCheckoutUrl = localStorage.getItem("shopify_checkout_url");
+
+    if (savedCartId && savedCheckoutUrl) {
+      setCartId(savedCartId);
+      setCheckoutUrl(savedCheckoutUrl);
+      return;
+    }
+
+    (async function createCart() {
       const mutation = `
         mutation {
           cartCreate {
@@ -20,10 +29,18 @@ function App() {
         }
       `;
       const data = await shopify(mutation);
-      setCartId(data.cartCreate.cart.id);
-      setCheckoutUrl(data.cartCreate.cart.checkoutUrl);
-    }
-    createCart();
+      const id = data?.cartCreate?.cart?.id || null;
+      const url = data?.cartCreate?.cart?.checkoutUrl || null;
+
+      if (id) {
+        setCartId(id);
+        localStorage.setItem("shopify_cart_id", id);
+      }
+      if (url) {
+        setCheckoutUrl(url);
+        localStorage.setItem("shopify_checkout_url", url);
+      }
+    })();
   }, []);
 
   // 🔹 Fetch products
@@ -68,9 +85,26 @@ function App() {
     fetchProducts();
   }, []);
 
-  // 🔹 Add item to cart
+  // 🔹 Add item to current cart
   const addToCart = async (variantId) => {
-    if (!cartId) return;
+    // if cartId somehow missing, create a fresh cart first
+    let id = cartId;
+    if (!id) {
+      const create = await shopify(`
+        mutation { cartCreate { cart { id checkoutUrl } } }
+      `);
+      id = create?.cartCreate?.cart?.id;
+      const url = create?.cartCreate?.cart?.checkoutUrl;
+      if (id) {
+        setCartId(id);
+        localStorage.setItem("shopify_cart_id", id);
+      }
+      if (url) {
+        setCheckoutUrl(url);
+        localStorage.setItem("shopify_checkout_url", url);
+      }
+      if (!id) return;
+    }
 
     const mutation = `
       mutation addToCart($cartId: ID!, $lines: [CartLineInput!]!) {
@@ -82,70 +116,97 @@ function App() {
               edges {
                 node {
                   id
-                  merchandise {
-                    ... on ProductVariant {
-                      title
-                    }
-                  }
+                  merchandise { ... on ProductVariant { title } }
                   quantity
                 }
               }
             }
           }
+          userErrors { field message }
         }
       }
     `;
-    await shopify(mutation, {
-      cartId,
+    const data = await shopify(mutation, {
+      cartId: id,
       lines: [{ merchandiseId: variantId, quantity: 1 }],
     });
+
+    const url = data?.cartLinesAdd?.cart?.checkoutUrl;
+    if (url) {
+      setCheckoutUrl(url);
+      localStorage.setItem("shopify_checkout_url", url);
+    }
 
     alert("✅ Item added to cart!");
   };
 
-  // 🔹 Redirect to Shopify checkout
-  const checkout = () => {
-    if (checkoutUrl) {
-      window.location.href = checkoutUrl;
+  // 🔹 Per-card Checkout (Buy Now): create a 1-item cart and redirect
+  const buyNow = async (variantId) => {
+    const mutation = `
+      mutation CreateCart($variantId: ID!) {
+        cartCreate(input: { lines: [{ merchandiseId: $variantId, quantity: 1 }] }) {
+          cart { checkoutUrl }
+          userErrors { message }
+        }
+      }
+    `;
+    const data = await shopify(mutation, { variantId });
+    const url = data?.cartCreate?.cart?.checkoutUrl;
+    if (url) {
+      window.location.href = url;
+    } else {
+      alert("Could not start checkout. Try again.");
     }
   };
 
+  // 🔹 Global checkout button (uses saved checkoutUrl)
+  const checkout = () => {
+    const url = checkoutUrl || localStorage.getItem("shopify_checkout_url");
+    if (url) window.location.href = url;
+    else alert("Your cart is empty. Add an item first.");
+  };
+
   return (
+    <div className="product-grid">
+      {products.map(({ node }) => (
+        <div key={node.id} className="product-card">
+          {node.images.edges.length > 0 && (
+            <img
+              src={node.images.edges[0].node.src}
+              alt={node.images.edges[0].node.altText || node.title}
+            />
+          )}
 
-    
-<div className="product-grid">
-  {products.map(({ node }) => (
-    <div key={node.id} className="product-card">
-      {node.images.edges.length > 0 && (
-        <img
-          src={node.images.edges[0].node.src}
-          alt={node.images.edges[0].node.altText || node.title}
-        />
-      )}
-      <h2 className="text-lg font-semibold mb-1">{node.title}</h2>
-     <p className="product-desc">
-  {node.description}
-</p>
+          <h2 className="text-lg font-semibold mb-1">{node.title}</h2>
 
-      <p className="text-green-700 font-bold mb-3">
-        {node.variants.edges[0].node.price.amount}{" "}
-        {node.variants.edges[0].node.price.currencyCode}
-      </p>
+          <p className="product-desc">{node.description}</p>
 
-      <div className="actions">
-        <button
-          onClick={() => addToCart(node.variants.edges[0].node.id)}
-          className="btn"
-        >
-          Add to Cart
-        </button>
-      </div>
+          <p className="text-green-700 font-bold mb-3">
+            {node.variants.edges[0].node.price.amount}{" "}
+            {node.variants.edges[0].node.price.currencyCode}
+          </p>
+
+          <div className="actions">
+            <button
+              onClick={() => addToCart(node.variants.edges[0].node.id)}
+              className="btn"
+            >
+              Add to Cart
+            </button>
+
+            <button
+              onClick={() => buyNow(node.variants.edges[0].node.id)}
+              className="btn"
+              style={{ backgroundColor: "#16a34a" }}
+            >
+              Buy Now
+            </button>
+          </div>
+        </div>
+      ))}
+
+     
     </div>
-  ))}
-</div>
-
- 
-
   );
 }
 
