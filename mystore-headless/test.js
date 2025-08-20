@@ -36,6 +36,8 @@ async function runTest() {
     }
   `;
 
+
+  
   try {
     const data = await shopify(mutation, { variantId });
     console.log("✅ Cart Created:", JSON.stringify(data, null, 2));
